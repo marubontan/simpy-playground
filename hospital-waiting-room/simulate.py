@@ -1,14 +1,27 @@
 import random
+from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID, uuid4
 
+from faker import Faker
 from simpy import Environment, Resource, Store
+
+
+@dataclass
+class Patient:
+    id: UUID
+    created_at: int | float
+    name: str
+    address: str
+    sex: str
+    birthdate: datetime
 
 
 class WaitingRoom:
     def __init__(self, env: Environment):
         self._patients = Store(env)
 
-    def put(self, patient: UUID):
+    def put(self, patient: Patient):
         self._patients.put(patient)
 
     def get(self):
@@ -20,7 +33,7 @@ class DoctorManager:
         self._doctors = Resource(env, num_doctors)
         self._diagnosis_time = diagnosis_time
 
-    def diagnose(self, env: Environment, patient: UUID):
+    def diagnose(self, env: Environment, patient: Patient):
         yield env.timeout(random.expovariate(1.0 / self._diagnosis_time))
         print(env.now, patient, "is diagnosed.")
 
@@ -31,7 +44,7 @@ class HospitalManager:
         self._doctor_manager = doctor_manager
         self._diagnosed_patients_number = 0
 
-    def add_patient_to_waiting_room(self, patient: UUID):
+    def add_patient_to_waiting_room(self, patient: Patient):
         self._waiting_room.put(patient)
 
     def invite_patient_to_doctor(self, env: Environment):
@@ -58,19 +71,31 @@ class Ecosystem:
     def __init__(self, patient_visit_time: float, hospital_manager: HospitalManager):
         self._patient_visit_time = patient_visit_time
         self._hospital_manager = hospital_manager
+        self._patient_provider = Faker()
 
     def run(self, env: Environment, until):
-        env.process(self.continue_to_generate_patients(env))
+        env.process(self._continue_to_generate_patients(env))
         env.process(self._hospital_manager.invite_patient_to_doctor(env))
         env.process(self._hospital_manager.monitor_waiting_room(env))
         env.run(until=until)
 
-    def continue_to_generate_patients(self, env: Environment):
+    def _generate_patient(self, env: Environment):
+        profile = self._patient_provider.simple_profile()
+        return Patient(
+            id=uuid4(),
+            created_at=env.now,
+            name=profile["name"],
+            address=profile["address"],
+            sex=profile["sex"],
+            birthdate=profile["birthdate"],
+        )
+
+    def _continue_to_generate_patients(self, env: Environment):
         patient_number = 0
         while True:
             yield env.timeout(random.expovariate(1.0 / self._patient_visit_time))
             patient_number += 1
-            patient = uuid4()
+            patient = self._generate_patient(env)
             self._hospital_manager.add_patient_to_waiting_room(patient)
 
 
