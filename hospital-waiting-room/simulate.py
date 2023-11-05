@@ -30,7 +30,7 @@ class WaitingRoom:
 
 class DoctorManager:
     def __init__(self, env: Environment, num_doctors: int, diagnosis_time: float):
-        self._doctors = Resource(env, num_doctors)
+        self._doctors = Resource(env, capacity=num_doctors)
         self._diagnosis_time = diagnosis_time
 
     def diagnose(self, env: Environment, patient: Patient):
@@ -48,13 +48,17 @@ class HospitalManager:
         self._waiting_room.put(patient)
 
     def invite_patient_to_doctor(self, env: Environment):
-        while True:
+        with self._waiting_room.get() as patient_req:
             with self._doctor_manager._doctors.request() as doctor_req:
-                with self._waiting_room.get() as patient_req:
-                    yield patient_req
-                    yield doctor_req
-                    yield from self._doctor_manager.diagnose(env, patient_req.value)
-                    self._diagnosed_patients_number += 1
+                yield doctor_req
+                yield patient_req
+                yield env.process(self._doctor_manager.diagnose(env, patient_req.value))
+                self._diagnosed_patients_number += 1
+
+    def keep_inviting_patient_to_doctor(self, env: Environment):
+        while True:
+            yield env.timeout(1)
+            env.process(self.invite_patient_to_doctor(env))
 
     def monitor_waiting_room(self, env: Environment):
         while True:
@@ -75,7 +79,7 @@ class Ecosystem:
 
     def run(self, env: Environment, until):
         env.process(self._continue_to_generate_patients(env))
-        env.process(self._hospital_manager.invite_patient_to_doctor(env))
+        env.process(self._hospital_manager.keep_inviting_patient_to_doctor(env))
         env.process(self._hospital_manager.monitor_waiting_room(env))
         env.run(until=until)
 
@@ -102,7 +106,7 @@ class Ecosystem:
 if __name__ == "__main__":
     env = Environment()
     waiting_room = WaitingRoom(env)
-    doctor_manager = DoctorManager(env, 2, 50)
+    doctor_manager = DoctorManager(env, 3, 30)
     hospital_manager = HospitalManager(waiting_room, doctor_manager)
-    ecosystem = Ecosystem(30, hospital_manager)
+    ecosystem = Ecosystem(1, hospital_manager)
     ecosystem.run(env, 1000)
